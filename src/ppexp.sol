@@ -12,7 +12,7 @@ contract PPEXP1 {
     mapping(address => uint256) public rolo;
     uint256 public win;
 
-    function setWin(uint256 _newWin) public {
+    function setWin(uint256 _newWin) external {
         win = _newWin;
     }
 
@@ -23,4 +23,9 @@ contract PPEXP1 {
     function addPlayer(address id) external {
         players.push(id);
     }
+
+    function readExp(address id) external view returns(uint256 exp){
+        return rolo[id];
+    }
+
 }

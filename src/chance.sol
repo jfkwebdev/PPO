@@ -5,7 +5,7 @@ pragma solidity ^0.8.0;
 import {IPPOMaster} from "./master.sol";
 
 interface VRFRouter {
-    function play() external returns (bytes32 requestId);
+    function play(address p, uint256 c, uint256 s, uint256 st) external returns (bytes32 requestId);
 }
 
 contract VRFInterface {
@@ -21,6 +21,7 @@ contract VRFInterface {
     function requestRandomness(uint256 numWords) internal returns (uint256 req){
         //bytes32 requestId = vrfRouter.requestRandomWords();
         //MasterContract(masterContract).handleRandomnessRequest(requestId);
+        return 2093902903*numWords;
     }
 
     function fulfillRandomRequest() external {
@@ -33,7 +34,7 @@ contract VRFInterface {
             uint256 stage, 
             uint256 stock
         ) public {
-            //requestRandomness(stock*2);
+            requestRandomness(stock*2);
             master.announce(player,character,stage,stock,requestRandomness(stock*2));
         }
 }

@@ -3,42 +3,90 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
+// import "forge-std/Console.sol";
 
 // Import the contract artifacts for your contracts
 import "../src/chance.sol";
 import "../src/master.sol";
 import "../src/ppexp.sol";
-import "../src/level1.sol";
+import "../src/fake/fakevrf.sol";
 
 contract ContractInteractionTest is Test {
-    VRFInterface vrfInterface;
-    PPOMaster masterContract;
-    PPEXP1 expContract;
-    //  wrapperContract;
+    fVRF _vrf;
+    VRF _chance;
+    PPOMaster _master;
+    PPEXP1 _exp;
+    address masterAdd;
+    address chanceAdd;
+    address vrfAdd;
+    address expAdd;
+
+    struct Gamet {
+        address player0;
+        uint32 char;
+        uint32 stock;
+        bool a;
+        bool w;
+        bool[10] score;
+    }
 
     function setUp() public {
         // Deploy your contracts here and set them up
-        vrfInterface = new VRFInterface(); // You may need to adjust these as per your contract deployment process
-        masterContract = new MasterContract(vrfInterface);
-        expContract = new ExpContract(10); // Assuming a predetermined amount of 10
-        wrapperContract = new WrapperContract(vrfInterface, masterContract, expContract);
+        _vrf = new fVRF();
+        vrfAdd = address(_vrf);
+        //flow
+        _master = new PPOMaster();
+        masterAdd = address(_master);
+        _chance = new VRF(vrfAdd,masterAdd);
+        chanceAdd = address(_chance); //
+        _vrf.setUp(chanceAdd);
+        _exp = new PPEXP1(masterAdd);
+        expAdd = address(_exp);
+        _master.setExp(expAdd);
+        _master.setChance(chanceAdd);
+        //_lvl1 = new PPO1(expAdd, masterAdd);
+        //lvl1Add = address(_lvl1);
     }
 
-    function test_1_ContractInitialization() public {
+    function test_1_ContractInitialization() view public {
         // Write test logic to check that contract addresses are set correctly
-        assertEq(wrapperContract.vrfInterface(), address(vrfInterface));
-        assertEq(wrapperContract.masterContract(), address(masterContract));
-        assertEq(wrapperContract.expContract(), address(expContract));
+        console.logAddress(expAdd);
+        console.logAddress(vrfAdd);
+        console.logAddress(masterAdd);
+        console.logAddress(chanceAdd);
+        //console.logAddress(lvl1Add);
     }
 
-    function test_2_RequestRandomness() public {
-        // Write test logic to ensure that randomness can be requested from the VRF interface
-        // Also, confirm that the request triggers interactions with other contracts
-        // You may want to use Mocks or Stub contracts for VRF interactions
+    function play(uint32 seed,uint32 stocks) public returns(uint256 id) {
+        vm.assume(seed < 100 && seed > 20);
+        _vrf.setRandomness(seed);
+        //vm.prank(address(5));
+        //_lvl1.play(1,1,3);
+        uint256 game = _master.arm(address(5),1,1,stocks);
+        vm.prank(address(1));
+        _vrf.handleRequest(stocks*2,id);
+        return game;
     }
 
-    function test_3_FavorableRandomnessOutcome() public {
+    // function test_2_RequestRandomness(uint256 seed) public {
+    //     play(seed);
+    // }
+    // function getDub(uint256 gameId) internal returns(bool) {
+    //     Gamet memory instance = _master.schedule(gameId);
+    //     return instance.w;
+    // }
+
+    function test_3_FavorableRandomnessOutcome(uint32 seed) public {
         // Write test logic to verify that favorable randomness outcomes result in value added in Exp contract
+        uint32 stocks = 3;
+        uint256 id = play(seed,stocks);
+        bool dub = _master.readDub(id);
+    
+        if(dub){
+            assertEq(_exp.ranking(address(5),1),100*stocks);
+        } else {
+            assertEq(_exp.ranking(address(5),1),0);
+        }
     }
 
     // Add the rest of the test functions here, covering all 30 scenarios as per your descriptions
@@ -54,13 +102,13 @@ contract ContractInteractionTest is Test {
 
     // Test the interactions between your contracts in each scenario
 
-    function test_31_RandomnessRequestAfterUpgrades() public {
-        // Write test logic to ensure that interactions still work correctly after contract upgrades
-    }
+    // function test_31_RandomnessRequestAfterUpgrades() public {
+    //     // Write test logic to ensure that interactions still work correctly after contract upgrades
+    // }
 
-    function test_32_EdgeCase_RequestFromUnauthorizedAddress() public {
-        // Write test logic to verify that only authorized addresses can request randomness
-    }
+    // function test_32_EdgeCase_RequestFromUnauthorizedAddress() public {
+    //     // Write test logic to verify that only authorized addresses can request randomness
+    // }
 
     // Add the remaining test functions for edge cases and specific scenarios
 

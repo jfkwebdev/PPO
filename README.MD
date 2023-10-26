@@ -6,7 +6,7 @@ This collection of smart contracts, tests and scripts are a workzone. It is the 
 
 this testing environment assumes you have a metamask or web3 wallet in your browser and the PPO game site working on a local server. Please refer to this complimentary repository for instructions on how to get that rolling:
 
-https://github.com/jfkwebdev/packbrawl
+https://github.com/jfkwebdev/powerpack
 
 This tutorial assumes you're using the default test wallet seed phrase:
 test,test,test,test,test,test,test,test,test,test,test,junk

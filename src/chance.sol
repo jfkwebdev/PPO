@@ -44,10 +44,10 @@ contract VRF is Test {
                 console.log('player1 hit');
                 --p0;
                 //change _0wins;
-                _0wins[i] = true;
             } else {
                 console.log('player0 hit');
                 --p1;
+                _0wins[i] = true;
                 //change _0wins;
             }
             if(p1 == 0 || p0 == 0){

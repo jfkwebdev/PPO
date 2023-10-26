@@ -39,3 +39,21 @@ When testing, if you change any contract code, you will need to restart anvil by
 You will also need to change the ABI on the website and also be sure that the contract addresses are correct for the MASTER.SOL and EXP.SOL contracts that print out in the anvil console.
 
 dm miladystation on twitter for help.
+
+## playing
+
+The game currently uses a pretend vrf using non random numbers. This workflow helps me avoid having to deploy onto sepolia every time I change the logic. The only draw back you have is that you have to essentially pretend to be the vrfcoordinator. Here's what play flow looks like
+
+Assuming you have your wallet with the test rpc rolling, you will be registered with the team 171,5,4,3,2,1
+the 171 pack will not work with the website as it is now. But if you play with packs 1-5 you can accrue exp.
+
+Pick one of those packs from the character selection screen, choose anystage and click fight. This will prompt a transaction and upon confirmation the reqId will print in the console. Copy that number and use it in the following command in place of $REQ_ID:
+
+```
+cast send --private-key $VRF_ADDRESS 0x5fbdb2315678afecb367f032d93f642f64180aa3 "handleRequest(uint32,uint256)" $STOCKS $REQ_ID --from "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266" --rpc-url http://127.0.0.1:8545
+```
+
+The $VRF_ADDRESS for the test setup is 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 for me. 
+The $STOCKS has to be 2 times whatever stocks you pick for the fight in order for it to match up. Usually its either 6 or 10
+
+I keep this command in a note and edit the number and paste it into my PPO terminal to act as the vrf coordinator. While you are doing this copy and pasting, the game should stay on the matrix looking screen. Upon confirmation on the foundry anvil blockchain, the site will find the reqId and see that the game result has populated, then the fight will begin.

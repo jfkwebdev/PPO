@@ -1,0 +1,2 @@
+ContractInteractionTest:test_1_ContractInitialization() (gas: 12380)
+ContractInteractionTest:test_3_FavorableRandomnessOutcome(uint32) (runs: 256, μ: 215025, ~: 215716)

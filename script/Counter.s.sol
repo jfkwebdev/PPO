@@ -2,39 +2,32 @@
 pragma solidity ^0.8.13;
 
 import "forge-std/Script.sol";
-import "../src/master.sol";
-import "../src/chance.sol";
+import "../src/lvl1.sol";
 import "../src/ppexp.sol";
-import "../src/fake/fakevrf.sol";
+//import "../src/fake/fakevrf.sol";
 
 contract CounterScript is Script {
-    fVRF _vrf;
-    VRF _chance;
+    //fVRF _vrf;
     PPOMaster _master;
     PPEXP1 _exp;
-    address masterAdd;
-    address chanceAdd;
-    address vrfAdd;
-    address expAdd;
-    function run() external {
+
+    function run() external returns(address, PPOMaster, PPEXP1) {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         vm.startBroadcast(deployerPrivateKey);
         // Deploy your contracts here and set them up
         //accounts[0] 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266,
-        _vrf = new fVRF();
-        vrfAdd = address(_vrf);
+        //_vrf = new fVRF();
         //flow
-        _master = new PPOMaster();
-        masterAdd = address(_master);
-        _chance = new VRF(vrfAdd,masterAdd);
-        chanceAdd = address(_chance); //
-        _vrf.setUp(chanceAdd);
-        _exp = new PPEXP1(masterAdd);
-        expAdd = address(_exp);
-        _master.setExp(expAdd);
-        _master.setChance(chanceAdd);
-        uint32[6] memory team = [uint32(171),uint32(5),uint32(4),uint32(3),uint32(2),uint32(1)];
+        _master = new PPOMaster(69);
+        //_vrf.setUp(address(_master));
+        _exp = new PPEXP1();
+        _exp.legalize(address(_master));
+        _master.setExp(address(_exp));
+        _master.setFee(100000000);
+        uint32[6] memory team = [uint32(12),uint32(5),uint32(4),uint32(3),uint32(2),uint32(1)];
         _exp.register(team);
         vm.stopBroadcast();
+        address own = _exp.owner();
+        return (own, _master, _exp);
     }
 }

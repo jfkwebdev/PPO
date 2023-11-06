@@ -1,4 +1,5 @@
 ds-test/=lib/forge-std/lib/ds-test/src/
 forge-std/=lib/forge-std/src/
 solady/=lib/solady/src/
-vrf/=lib/chainlink/contracts/src/v0.8/vrf
+chainlink/=lib/chainlink/contracts/src/v0.8
+oz/=lib/openzeppelin-contracts/contracts

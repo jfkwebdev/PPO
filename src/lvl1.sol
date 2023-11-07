@@ -42,6 +42,7 @@ contract PPOMaster is VRFConsumerBaseV2, ConfirmedOwner {
     error lvl1__SaturatedCredit();
     error lvl1__StockOverflow();
     error lvl1__CurrentlyEngaged();
+    error lvl1__notCool();
     
 // State variables
 
@@ -49,8 +50,9 @@ contract PPOMaster is VRFConsumerBaseV2, ConfirmedOwner {
     bool public open;
     bool public safe;
     uint64 s_subscriptionId;
+    //arb goerli 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730
     //arb 2gwei 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f
-    bytes32 keyHash = 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f;
+    bytes32 keyHash = 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730;
     uint32 callbackGasLimit = 100000;
     uint16 requestConfirmations = 3;
     uint256 public games;
@@ -77,6 +79,7 @@ modifier overhead(uint256 credit) {
     uint256 _fee = fee;
     uint256 _health = checkHealth();
     uint256 _account = book[msg.sender];
+    if(block.timestamp < coolDown[msg.sender]){revert lvl1__notCool();}
     if(msg.value < _fee){revert lvl1__InsufficientFee();}
     if(!safe && (msg.value > fee || credit > 0)){revert lvl1__ToteClosed();}
     if(credit > _account){revert lvl1__InsufficientCredit();}
@@ -108,6 +111,7 @@ struct Game {
     uint256 wager;
 }
 
+mapping(address => uint256) public coolDown;
 mapping(address => bool) public engagement;
 mapping(address => uint256) public losses;
 mapping(address => uint256) public winnings;
@@ -121,11 +125,12 @@ VRFCoordinatorV2Interface COORDINATOR;
 
     constructor ( uint64 subscriptionId) 
     ConfirmedOwner(msg.sender)
-    //arb 
-    VRFConsumerBaseV2(0x41034678D6C633D8a95c75e1138A360a28bA15d1)
+    //arb 0x41034678D6C633D8a95c75e1138A360a28bA15d1
+    //arb goerli 0x6D80646bEAdd07cE68cab36c27c626790bBcf17f
+    VRFConsumerBaseV2(0x6D80646bEAdd07cE68cab36c27c626790bBcf17f)
     {
         COORDINATOR = VRFCoordinatorV2Interface(
-            0x41034678D6C633D8a95c75e1138A360a28bA15d1
+            0x6D80646bEAdd07cE68cab36c27c626790bBcf17f
         );
         s_subscriptionId = subscriptionId;
     }
@@ -202,7 +207,8 @@ VRFCoordinatorV2Interface COORDINATOR;
                 score: _score,
                 wager: msg.value + _wager - fee
             });
-            games++;
+            coolDown[msg.sender] = block.timestamp + _stock*15;
+            ++games;
             emit Fight(id, _player1,_character,_stage,_stock, _wager);
             return id;
     }

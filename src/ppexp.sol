@@ -6,6 +6,7 @@ import "solady/auth/Ownable.sol";
 
 interface IPPEXP1 {
     function addValue(address,uint32,uint32) external;
+    function obliviate(address,uint32) external;
     function register(uint32[6] memory) external;
     function knight(uint32 char, string memory title) external;
     function incorporate(string memory userName) external;
@@ -24,6 +25,7 @@ contract PPEXP1 is Ownable {
 /////////////////////
 
     uint32 public win = 100;
+    IPPEXP1 public old;
 
 ////////////
 // Events //
@@ -36,6 +38,7 @@ contract PPEXP1 is Ownable {
     event Knighted(address player, uint32 character, string title);
     event Legalized(address executor);
     event ChangeWin(uint32 newWin);
+    event Obliviated(address player, uint32 character);
 
 ////////////   
 // Errors //
@@ -55,6 +58,7 @@ modifier onlyLegal {
     if(!legal[msg.sender]){revert EXP__UnauthorizedFight();}
     _;
 }
+
 
 /////////////////////////////
 // Struct, Arrays or Enums //
@@ -110,6 +114,16 @@ modifier onlyLegal {
         emit plusExp(player, char, win*stock);
     }
 
+    function obliviate(address player, uint32 char) external onlyLegal {
+        ranking[player][char] = 0;
+        emit Obliviated(player,char);
+    }
+
+    function bless(address player, uint32 char, uint32 exp) external onlyLegal {
+        ranking[player][char] = exp;
+        emit plusExp(player,char,exp);
+    }
+
     function incorporate(string memory userName) external {
         //Level12
         if(userExp(msg.sender) < 1728){revert EXP__LowLevel();}
@@ -152,6 +166,27 @@ modifier onlyLegal {
         players.push(msg.sender);
         registrar[msg.sender] = team;
         emit NewRegister(msg.sender,team);
+    }
+
+    function upgrade(address oldExp) external onlyOwner {
+        IPPEXP1 _oldExp = IPPEXP1(oldExp);
+        address[] memory oldPlayers = _oldExp.readPlayers();
+        uint32[6] memory oldTeam;
+        for(uint256 i = 0; i < oldPlayers.length;){
+            players.push(oldPlayers[i]);
+            oldTeam = _oldExp.readRegistrar(oldPlayers[i]);
+            registrar[oldPlayers[i]] = oldTeam;
+            for(uint8 p = 0; p < 6;){
+                ranking[oldPlayers[i]][oldTeam[p]] = _oldExp.readPackExp(oldPlayers[i],oldTeam[p]);
+                unchecked {
+                    ++p;
+                }
+            }
+            emit NewRegister(oldPlayers[i], oldTeam);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
 

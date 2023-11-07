@@ -19,11 +19,16 @@ contract CounterScript is Script {
         //_vrf = new fVRF();
         //flow
         _master = new PPOMaster(69);
+
         //_vrf.setUp(address(_master));
         _exp = new PPEXP1();
+        //address own = _exp.owner();
+        //vm.prank(own);
         _exp.legalize(address(_master));
         _master.setExp(address(_exp));
         _master.setFee(100000000);
+        _master.ignition();
+        _master.nitro();
         uint32[6] memory team = [uint32(12),uint32(5),uint32(4),uint32(3),uint32(2),uint32(1)];
         _exp.register(team);
         vm.stopBroadcast();

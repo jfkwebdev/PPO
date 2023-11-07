@@ -35,6 +35,7 @@ contract PPEXP1 is Ownable {
     event plusExp(address player, uint32 character, uint32 exp);
     event Knighted(address player, uint32 character, string title);
     event Legalized(address executor);
+    event ChangeWin(uint32 newWin);
 
 ////////////   
 // Errors //
@@ -120,11 +121,13 @@ modifier onlyLegal {
         //PPLevel30
         if(ranking[msg.sender][char] < 27000){revert EXP__LowLevel();}
         roster[msg.sender][char] = title;
+        emit Knighted(msg.sender,char,title);
     }
 
     function setWin(uint32 _newWin) external onlyOwner {
         if(_newWin >= 10000){revert EXP__WinOverFlow();}
         win = _newWin;
+        emit ChangeWin(_newWin);
     }
 
     function legalize(address newArena) external onlyOwner {
@@ -151,6 +154,12 @@ modifier onlyLegal {
         emit NewRegister(msg.sender,team);
     }
 
+
+//////////////
+// Internal //
+//////////////
+
+
     function userExp(address player) internal view returns(uint32){
         uint32 xp;
         uint32[6] memory _team = registrar[player];
@@ -163,12 +172,5 @@ modifier onlyLegal {
         return xp;
     }
 
-////////////////////
-// Test functions //
-////////////////////
-
-    // function makeLevel30(address player, uint32 char) external {
-    //     ranking[player][char] = uint32(27000);
-    // }
 
 }

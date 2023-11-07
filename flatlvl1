@@ -1,0 +1,1054 @@
+//SPDX-License-Identifier: MIT
+
+pragma solidity ^0.8.0;
+
+/// @notice Simple single owner authorization mixin.
+/// @author Solady (https://github.com/vectorized/solady/blob/main/src/auth/Ownable.sol)
+///
+/// @dev Note:
+/// This implementation does NOT auto-initialize the owner to `msg.sender`.
+/// You MUST call the `_initializeOwner` in the constructor / initializer.
+///
+/// While the ownable portion follows
+/// [EIP-173](https://eips.ethereum.org/EIPS/eip-173) for compatibility,
+/// the nomenclature for the 2-step ownership handover may be unique to this codebase.
+abstract contract Ownable {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CUSTOM ERRORS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The caller is not authorized to call the function.
+    error Unauthorized();
+
+    /// @dev The `newOwner` cannot be the zero address.
+    error NewOwnerIsZeroAddress();
+
+    /// @dev The `pendingOwner` does not have a valid handover request.
+    error NoHandoverRequest();
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                           EVENTS                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The ownership is transferred from `oldOwner` to `newOwner`.
+    /// This event is intentionally kept the same as OpenZeppelin's Ownable to be
+    /// compatible with indexers and [EIP-173](https://eips.ethereum.org/EIPS/eip-173),
+    /// despite it not being as lightweight as a single argument event.
+    event OwnershipTransferred(address indexed oldOwner, address indexed newOwner);
+
+    /// @dev An ownership handover to `pendingOwner` has been requested.
+    event OwnershipHandoverRequested(address indexed pendingOwner);
+
+    /// @dev The ownership handover to `pendingOwner` has been canceled.
+    event OwnershipHandoverCanceled(address indexed pendingOwner);
+
+    /// @dev `keccak256(bytes("OwnershipTransferred(address,address)"))`.
+    uint256 private constant _OWNERSHIP_TRANSFERRED_EVENT_SIGNATURE =
+        0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0;
+
+    /// @dev `keccak256(bytes("OwnershipHandoverRequested(address)"))`.
+    uint256 private constant _OWNERSHIP_HANDOVER_REQUESTED_EVENT_SIGNATURE =
+        0xdbf36a107da19e49527a7176a1babf963b4b0ff8cde35ee35d6cd8f1f9ac7e1d;
+
+    /// @dev `keccak256(bytes("OwnershipHandoverCanceled(address)"))`.
+    uint256 private constant _OWNERSHIP_HANDOVER_CANCELED_EVENT_SIGNATURE =
+        0xfa7b8eab7da67f412cc9575ed43464468f9bfbae89d1675917346ca6d8fe3c92;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                          STORAGE                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev The owner slot is given by: `not(_OWNER_SLOT_NOT)`.
+    /// It is intentionally chosen to be a high value
+    /// to avoid collision with lower slots.
+    /// The choice of manual storage layout is to enable compatibility
+    /// with both regular and upgradeable contracts.
+    uint256 private constant _OWNER_SLOT_NOT = 0x8b78c6d8;
+
+    /// The ownership handover slot of `newOwner` is given by:
+    /// ```
+    ///     mstore(0x00, or(shl(96, user), _HANDOVER_SLOT_SEED))
+    ///     let handoverSlot := keccak256(0x00, 0x20)
+    /// ```
+    /// It stores the expiry timestamp of the two-step ownership handover.
+    uint256 private constant _HANDOVER_SLOT_SEED = 0x389a75e1;
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     INTERNAL FUNCTIONS                     */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Initializes the owner directly without authorization guard.
+    /// This function must be called upon initialization,
+    /// regardless of whether the contract is upgradeable or not.
+    /// This is to enable generalization to both regular and upgradeable contracts,
+    /// and to save gas in case the initial owner is not the caller.
+    /// For performance reasons, this function will not check if there
+    /// is an existing owner.
+    function _initializeOwner(address newOwner) internal virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Clean the upper 96 bits.
+            newOwner := shr(96, shl(96, newOwner))
+            // Store the new value.
+            sstore(not(_OWNER_SLOT_NOT), newOwner)
+            // Emit the {OwnershipTransferred} event.
+            log3(0, 0, _OWNERSHIP_TRANSFERRED_EVENT_SIGNATURE, 0, newOwner)
+        }
+    }
+
+    /// @dev Sets the owner directly without authorization guard.
+    function _setOwner(address newOwner) internal virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            let ownerSlot := not(_OWNER_SLOT_NOT)
+            // Clean the upper 96 bits.
+            newOwner := shr(96, shl(96, newOwner))
+            // Emit the {OwnershipTransferred} event.
+            log3(0, 0, _OWNERSHIP_TRANSFERRED_EVENT_SIGNATURE, sload(ownerSlot), newOwner)
+            // Store the new value.
+            sstore(ownerSlot, newOwner)
+        }
+    }
+
+    /// @dev Throws if the sender is not the owner.
+    function _checkOwner() internal view virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // If the caller is not the stored owner, revert.
+            if iszero(eq(caller(), sload(not(_OWNER_SLOT_NOT)))) {
+                mstore(0x00, 0x82b42900) // `Unauthorized()`.
+                revert(0x1c, 0x04)
+            }
+        }
+    }
+
+    /// @dev Returns how long a two-step ownership handover is valid for in seconds.
+    /// Override to return a different value if needed.
+    /// Made internal to conserve bytecode. Wrap it in a public function if needed.
+    function _ownershipHandoverValidFor() internal view virtual returns (uint64) {
+        return 48 * 3600;
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                  PUBLIC UPDATE FUNCTIONS                   */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Allows the owner to transfer the ownership to `newOwner`.
+    function transferOwnership(address newOwner) public payable virtual onlyOwner {
+        /// @solidity memory-safe-assembly
+        assembly {
+            if iszero(shl(96, newOwner)) {
+                mstore(0x00, 0x7448fbae) // `NewOwnerIsZeroAddress()`.
+                revert(0x1c, 0x04)
+            }
+        }
+        _setOwner(newOwner);
+    }
+
+    /// @dev Allows the owner to renounce their ownership.
+    function renounceOwnership() public payable virtual onlyOwner {
+        _setOwner(address(0));
+    }
+
+    /// @dev Request a two-step ownership handover to the caller.
+    /// The request will automatically expire in 48 hours (172800 seconds) by default.
+    function requestOwnershipHandover() public payable virtual {
+        unchecked {
+            uint256 expires = block.timestamp + _ownershipHandoverValidFor();
+            /// @solidity memory-safe-assembly
+            assembly {
+                // Compute and set the handover slot to `expires`.
+                mstore(0x0c, _HANDOVER_SLOT_SEED)
+                mstore(0x00, caller())
+                sstore(keccak256(0x0c, 0x20), expires)
+                // Emit the {OwnershipHandoverRequested} event.
+                log2(0, 0, _OWNERSHIP_HANDOVER_REQUESTED_EVENT_SIGNATURE, caller())
+            }
+        }
+    }
+
+    /// @dev Cancels the two-step ownership handover to the caller, if any.
+    function cancelOwnershipHandover() public payable virtual {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Compute and set the handover slot to 0.
+            mstore(0x0c, _HANDOVER_SLOT_SEED)
+            mstore(0x00, caller())
+            sstore(keccak256(0x0c, 0x20), 0)
+            // Emit the {OwnershipHandoverCanceled} event.
+            log2(0, 0, _OWNERSHIP_HANDOVER_CANCELED_EVENT_SIGNATURE, caller())
+        }
+    }
+
+    /// @dev Allows the owner to complete the two-step ownership handover to `pendingOwner`.
+    /// Reverts if there is no existing ownership handover requested by `pendingOwner`.
+    function completeOwnershipHandover(address pendingOwner) public payable virtual onlyOwner {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Compute and set the handover slot to 0.
+            mstore(0x0c, _HANDOVER_SLOT_SEED)
+            mstore(0x00, pendingOwner)
+            let handoverSlot := keccak256(0x0c, 0x20)
+            // If the handover does not exist, or has expired.
+            if gt(timestamp(), sload(handoverSlot)) {
+                mstore(0x00, 0x6f5e8818) // `NoHandoverRequest()`.
+                revert(0x1c, 0x04)
+            }
+            // Set the handover slot to 0.
+            sstore(handoverSlot, 0)
+        }
+        _setOwner(pendingOwner);
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                   PUBLIC READ FUNCTIONS                    */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Returns the owner of the contract.
+    function owner() public view virtual returns (address result) {
+        /// @solidity memory-safe-assembly
+        assembly {
+            result := sload(not(_OWNER_SLOT_NOT))
+        }
+    }
+
+    /// @dev Returns the expiry timestamp for the two-step ownership handover to `pendingOwner`.
+    function ownershipHandoverExpiresAt(address pendingOwner)
+        public
+        view
+        virtual
+        returns (uint256 result)
+    {
+        /// @solidity memory-safe-assembly
+        assembly {
+            // Compute the handover slot.
+            mstore(0x0c, _HANDOVER_SLOT_SEED)
+            mstore(0x00, pendingOwner)
+            // Load the handover slot.
+            result := sload(keccak256(0x0c, 0x20))
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                         MODIFIERS                          */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    /// @dev Marks a function as only callable by the owner.
+    modifier onlyOwner() virtual {
+        _checkOwner();
+        _;
+    }
+}
+
+interface IPPEXP1 {
+    function addValue(address,uint32,uint32) external;
+    function register(uint32[6] memory) external;
+    function knight(uint32 char, string memory title) external;
+    function incorporate(string memory userName) external;
+    function readPackExp(address id, uint32 char) external returns (uint32 xp);
+    function readRoster(address id, uint32 char) external returns (string memory);
+    function readStats(uint32 char) external view returns (uint256 atk, uint256 def, uint256 spd);
+    function readPlayers() external view returns (address[] memory) ;
+    function readRegistrar(address id) external returns(uint32[6] memory);
+    function readCanon(address id) external returns(string memory);
+}
+
+contract PPEXP1 is Ownable {
+
+/////////////////////
+// State variables //
+/////////////////////
+
+    uint32 public win = 100;
+
+////////////
+// Events //
+////////////
+
+    event NewRegister(address player, uint32[6] team);
+    event NewUser(address player, string name);
+    event ChangeTeam(address player, uint32[6] team);
+    event plusExp(address player, uint32 character, uint32 exp);
+    event Knighted(address player, uint32 character, string title);
+    event Legalized(address executor);
+    event ChangeWin(uint32 newWin);
+
+////////////   
+// Errors //
+////////////
+
+    error EXP__NotFromMaster();
+    error EXP__LowLevel();
+    error EXP__WinOverFlow();
+    error EXP__UnauthorizedFight();
+    error EXP__DuplicateTeam();
+
+////////////////////////    
+// Function Modifiers //
+////////////////////////
+
+modifier onlyLegal {
+    if(!legal[msg.sender]){revert EXP__UnauthorizedFight();}
+    _;
+}
+
+/////////////////////////////
+// Struct, Arrays or Enums //
+/////////////////////////////
+
+    address[] public players;
+    mapping(address => string) public canon;
+    mapping(address => uint32[6]) public registrar;
+    mapping(address => mapping(uint32 => uint32)) public ranking;
+    mapping(address => mapping(uint32 => string)) public roster;
+    mapping(address => bool) public legal;
+
+/////////////////   
+// Constructor //
+/////////////////
+
+    constructor() {
+        _initializeOwner(msg.sender);
+    }
+
+////////////////////////////////
+// External visible functions //
+////////////////////////////////
+
+    function readPlayers() external view returns (address[] memory) {
+        return players;
+    }
+    function readPackExp(address id, uint32 char) external view returns(uint32 exp){
+        return ranking[id][char];
+    }
+
+    function readRegistrar(address id) external view returns(uint32[6] memory){
+        return registrar[id];
+    }
+
+    function readRoster(address player, uint32 char) external view returns(string memory){
+        return roster[player][char];
+    }
+
+    function readCanon(address player) external view returns(string memory){
+        return canon[player];
+    }
+
+    function readStats(uint32 char) external pure returns (uint256 atk, uint256 def, uint256 spd) {
+        uint256 _atk = uint256(keccak256(abi.encodePacked(char)));
+        uint256 _def = uint256(keccak256(abi.encodePacked(1e18/char)));
+        uint256 _spd = uint256(keccak256(abi.encodePacked(char*char)));
+        return (_atk % 1000,_def % 1000,_spd % 1000);
+    }
+
+    function addValue(address player, uint32 char, uint32 stock) external onlyLegal {
+        ranking[player][char] += win*stock;
+        emit plusExp(player, char, win*stock);
+    }
+
+    function incorporate(string memory userName) external {
+        //Level12
+        if(userExp(msg.sender) < 1728){revert EXP__LowLevel();}
+        canon[msg.sender] = userName;
+        emit NewUser(msg.sender,userName);
+    }
+
+    function knight(uint32 char, string memory title) external {
+        //PPLevel30
+        if(ranking[msg.sender][char] < 27000){revert EXP__LowLevel();}
+        roster[msg.sender][char] = title;
+        emit Knighted(msg.sender,char,title);
+    }
+
+    function setWin(uint32 _newWin) external onlyOwner {
+        if(_newWin >= 10000){revert EXP__WinOverFlow();}
+        win = _newWin;
+        emit ChangeWin(_newWin);
+    }
+
+    function legalize(address newArena) external onlyOwner {
+        legal[newArena] = !legal[newArena];
+        emit Legalized(newArena);
+    }
+
+    function register(uint32[6] memory team) external {
+        for(uint8 i; i<5;){
+            for(uint8 j=i+1; j<6;){
+                if(team[i]==team[j]){
+                    revert EXP__DuplicateTeam();
+                }
+                unchecked{
+                    ++j;
+                }
+            }
+            unchecked{
+                ++i;
+            }
+        }
+        players.push(msg.sender);
+        registrar[msg.sender] = team;
+        emit NewRegister(msg.sender,team);
+    }
+
+//////////////
+// Internal //
+//////////////
+
+    function userExp(address player) internal view returns(uint32){
+        uint32 xp;
+        uint32[6] memory _team = registrar[player];
+        for(uint8 i; i < 6;){
+            xp += ranking[player][_team[i]];
+            unchecked {
+                ++i;
+            }
+        }
+        return xp;
+    }
+
+}
+
+interface IOwnable {
+  function owner() external returns (address);
+
+  function transferOwnership(address recipient) external;
+
+  function acceptOwnership() external;
+}
+
+/**
+ * @title The ConfirmedOwner contract
+ * @notice A contract with helpers for basic contract ownership.
+ */
+contract ConfirmedOwnerWithProposal is IOwnable {
+  address private s_owner;
+  address private s_pendingOwner;
+
+  event OwnershipTransferRequested(address indexed from, address indexed to);
+  event OwnershipTransferred(address indexed from, address indexed to);
+
+  constructor(address newOwner, address pendingOwner) {
+    // solhint-disable-next-line custom-errors
+    require(newOwner != address(0), "Cannot set owner to zero");
+
+    s_owner = newOwner;
+    if (pendingOwner != address(0)) {
+      _transferOwnership(pendingOwner);
+    }
+  }
+
+  /**
+   * @notice Allows an owner to begin transferring ownership to a new address,
+   * pending.
+   */
+  function transferOwnership(address to) public override onlyOwner {
+    _transferOwnership(to);
+  }
+
+  /**
+   * @notice Allows an ownership transfer to be completed by the recipient.
+   */
+  function acceptOwnership() external override {
+    // solhint-disable-next-line custom-errors
+    require(msg.sender == s_pendingOwner, "Must be proposed owner");
+
+    address oldOwner = s_owner;
+    s_owner = msg.sender;
+    s_pendingOwner = address(0);
+
+    emit OwnershipTransferred(oldOwner, msg.sender);
+  }
+
+  /**
+   * @notice Get the current owner
+   */
+  function owner() public view override returns (address) {
+    return s_owner;
+  }
+
+  /**
+   * @notice validate, transfer ownership, and emit relevant events
+   */
+  function _transferOwnership(address to) private {
+    // solhint-disable-next-line custom-errors
+    require(to != msg.sender, "Cannot transfer to self");
+
+    s_pendingOwner = to;
+
+    emit OwnershipTransferRequested(s_owner, to);
+  }
+
+  /**
+   * @notice validate access
+   */
+  function _validateOwnership() internal view {
+    // solhint-disable-next-line custom-errors
+    require(msg.sender == s_owner, "Only callable by owner");
+  }
+
+  /**
+   * @notice Reverts if called by anyone other than the contract owner.
+   */
+  modifier onlyOwner() {
+    _validateOwnership();
+    _;
+  }
+}
+
+/**
+ * @title The ConfirmedOwner contract
+ * @notice A contract with helpers for basic contract ownership.
+ */
+contract ConfirmedOwner is ConfirmedOwnerWithProposal {
+  constructor(address newOwner) ConfirmedOwnerWithProposal(newOwner, address(0)) {}
+}
+
+interface VRFCoordinatorV2Interface {
+  /**
+   * @notice Get configuration relevant for making requests
+   * @return minimumRequestConfirmations global min for request confirmations
+   * @return maxGasLimit global max for request gas limit
+   * @return s_provingKeyHashes list of registered key hashes
+   */
+  function getRequestConfig() external view returns (uint16, uint32, bytes32[] memory);
+
+  /**
+   * @notice Request a set of random words.
+   * @param keyHash - Corresponds to a particular oracle job which uses
+   * that key for generating the VRF proof. Different keyHash's have different gas price
+   * ceilings, so you can select a specific one to bound your maximum per request cost.
+   * @param subId  - The ID of the VRF subscription. Must be funded
+   * with the minimum subscription balance required for the selected keyHash.
+   * @param minimumRequestConfirmations - How many blocks you'd like the
+   * oracle to wait before responding to the request. See SECURITY CONSIDERATIONS
+   * for why you may want to request more. The acceptable range is
+   * [minimumRequestBlockConfirmations, 200].
+   * @param callbackGasLimit - How much gas you'd like to receive in your
+   * fulfillRandomWords callback. Note that gasleft() inside fulfillRandomWords
+   * may be slightly less than this amount because of gas used calling the function
+   * (argument decoding etc.), so you may need to request slightly more than you expect
+   * to have inside fulfillRandomWords. The acceptable range is
+   * [0, maxGasLimit]
+   * @param numWords - The number of uint256 random values you'd like to receive
+   * in your fulfillRandomWords callback. Note these numbers are expanded in a
+   * secure way by the VRFCoordinator from a single random value supplied by the oracle.
+   * @return requestId - A unique identifier of the request. Can be used to match
+   * a request to a response in fulfillRandomWords.
+   */
+  function requestRandomWords(
+    bytes32 keyHash,
+    uint64 subId,
+    uint16 minimumRequestConfirmations,
+    uint32 callbackGasLimit,
+    uint32 numWords
+  ) external returns (uint256 requestId);
+
+  /**
+   * @notice Create a VRF subscription.
+   * @return subId - A unique subscription id.
+   * @dev You can manage the consumer set dynamically with addConsumer/removeConsumer.
+   * @dev Note to fund the subscription, use transferAndCall. For example
+   * @dev  LINKTOKEN.transferAndCall(
+   * @dev    address(COORDINATOR),
+   * @dev    amount,
+   * @dev    abi.encode(subId));
+   */
+  function createSubscription() external returns (uint64 subId);
+
+  /**
+   * @notice Get a VRF subscription.
+   * @param subId - ID of the subscription
+   * @return balance - LINK balance of the subscription in juels.
+   * @return reqCount - number of requests for this subscription, determines fee tier.
+   * @return owner - owner of the subscription.
+   * @return consumers - list of consumer address which are able to use this subscription.
+   */
+  function getSubscription(
+    uint64 subId
+  ) external view returns (uint96 balance, uint64 reqCount, address owner, address[] memory consumers);
+
+  /**
+   * @notice Request subscription owner transfer.
+   * @param subId - ID of the subscription
+   * @param newOwner - proposed new owner of the subscription
+   */
+  function requestSubscriptionOwnerTransfer(uint64 subId, address newOwner) external;
+
+  /**
+   * @notice Request subscription owner transfer.
+   * @param subId - ID of the subscription
+   * @dev will revert if original owner of subId has
+   * not requested that msg.sender become the new owner.
+   */
+  function acceptSubscriptionOwnerTransfer(uint64 subId) external;
+
+  /**
+   * @notice Add a consumer to a VRF subscription.
+   * @param subId - ID of the subscription
+   * @param consumer - New consumer which can use the subscription
+   */
+  function addConsumer(uint64 subId, address consumer) external;
+
+  /**
+   * @notice Remove a consumer from a VRF subscription.
+   * @param subId - ID of the subscription
+   * @param consumer - Consumer to remove from the subscription
+   */
+  function removeConsumer(uint64 subId, address consumer) external;
+
+  /**
+   * @notice Cancel a subscription
+   * @param subId - ID of the subscription
+   * @param to - Where to send the remaining LINK to
+   */
+  function cancelSubscription(uint64 subId, address to) external;
+
+  /*
+   * @notice Check to see if there exists a request commitment consumers
+   * for all consumers and keyhashes for a given sub.
+   * @param subId - ID of the subscription
+   * @return true if there exists at least one unfulfilled request for the subscription, false
+   * otherwise.
+   */
+  function pendingRequestExists(uint64 subId) external view returns (bool);
+}
+
+/** ****************************************************************************
+ * @notice Interface for contracts using VRF randomness
+ * *****************************************************************************
+ * @dev PURPOSE
+ *
+ * @dev Reggie the Random Oracle (not his real job) wants to provide randomness
+ * @dev to Vera the verifier in such a way that Vera can be sure he's not
+ * @dev making his output up to suit himself. Reggie provides Vera a public key
+ * @dev to which he knows the secret key. Each time Vera provides a seed to
+ * @dev Reggie, he gives back a value which is computed completely
+ * @dev deterministically from the seed and the secret key.
+ *
+ * @dev Reggie provides a proof by which Vera can verify that the output was
+ * @dev correctly computed once Reggie tells it to her, but without that proof,
+ * @dev the output is indistinguishable to her from a uniform random sample
+ * @dev from the output space.
+ *
+ * @dev The purpose of this contract is to make it easy for unrelated contracts
+ * @dev to talk to Vera the verifier about the work Reggie is doing, to provide
+ * @dev simple access to a verifiable source of randomness. It ensures 2 things:
+ * @dev 1. The fulfillment came from the VRFCoordinator
+ * @dev 2. The consumer contract implements fulfillRandomWords.
+ * *****************************************************************************
+ * @dev USAGE
+ *
+ * @dev Calling contracts must inherit from VRFConsumerBase, and can
+ * @dev initialize VRFConsumerBase's attributes in their constructor as
+ * @dev shown:
+ *
+ * @dev   contract VRFConsumer {
+ * @dev     constructor(<other arguments>, address _vrfCoordinator, address _link)
+ * @dev       VRFConsumerBase(_vrfCoordinator) public {
+ * @dev         <initialization with other arguments goes here>
+ * @dev       }
+ * @dev   }
+ *
+ * @dev The oracle will have given you an ID for the VRF keypair they have
+ * @dev committed to (let's call it keyHash). Create subscription, fund it
+ * @dev and your consumer contract as a consumer of it (see VRFCoordinatorInterface
+ * @dev subscription management functions).
+ * @dev Call requestRandomWords(keyHash, subId, minimumRequestConfirmations,
+ * @dev callbackGasLimit, numWords),
+ * @dev see (VRFCoordinatorInterface for a description of the arguments).
+ *
+ * @dev Once the VRFCoordinator has received and validated the oracle's response
+ * @dev to your request, it will call your contract's fulfillRandomWords method.
+ *
+ * @dev The randomness argument to fulfillRandomWords is a set of random words
+ * @dev generated from your requestId and the blockHash of the request.
+ *
+ * @dev If your contract could have concurrent requests open, you can use the
+ * @dev requestId returned from requestRandomWords to track which response is associated
+ * @dev with which randomness request.
+ * @dev See "SECURITY CONSIDERATIONS" for principles to keep in mind,
+ * @dev if your contract could have multiple requests in flight simultaneously.
+ *
+ * @dev Colliding `requestId`s are cryptographically impossible as long as seeds
+ * @dev differ.
+ *
+ * *****************************************************************************
+ * @dev SECURITY CONSIDERATIONS
+ *
+ * @dev A method with the ability to call your fulfillRandomness method directly
+ * @dev could spoof a VRF response with any random value, so it's critical that
+ * @dev it cannot be directly called by anything other than this base contract
+ * @dev (specifically, by the VRFConsumerBase.rawFulfillRandomness method).
+ *
+ * @dev For your users to trust that your contract's random behavior is free
+ * @dev from malicious interference, it's best if you can write it so that all
+ * @dev behaviors implied by a VRF response are executed *during* your
+ * @dev fulfillRandomness method. If your contract must store the response (or
+ * @dev anything derived from it) and use it later, you must ensure that any
+ * @dev user-significant behavior which depends on that stored value cannot be
+ * @dev manipulated by a subsequent VRF request.
+ *
+ * @dev Similarly, both miners and the VRF oracle itself have some influence
+ * @dev over the order in which VRF responses appear on the blockchain, so if
+ * @dev your contract could have multiple VRF requests in flight simultaneously,
+ * @dev you must ensure that the order in which the VRF responses arrive cannot
+ * @dev be used to manipulate your contract's user-significant behavior.
+ *
+ * @dev Since the block hash of the block which contains the requestRandomness
+ * @dev call is mixed into the input to the VRF *last*, a sufficiently powerful
+ * @dev miner could, in principle, fork the blockchain to evict the block
+ * @dev containing the request, forcing the request to be included in a
+ * @dev different block with a different hash, and therefore a different input
+ * @dev to the VRF. However, such an attack would incur a substantial economic
+ * @dev cost. This cost scales with the number of blocks the VRF oracle waits
+ * @dev until it calls responds to a request. It is for this reason that
+ * @dev that you can signal to an oracle you'd like them to wait longer before
+ * @dev responding to the request (however this is not enforced in the contract
+ * @dev and so remains effective only in the case of unmodified oracle software).
+ */
+abstract contract VRFConsumerBaseV2 {
+  error OnlyCoordinatorCanFulfill(address have, address want);
+  // solhint-disable-next-line chainlink-solidity/prefix-immutable-variables-with-i
+  address private immutable vrfCoordinator;
+
+  /**
+   * @param _vrfCoordinator address of VRFCoordinator contract
+   */
+  constructor(address _vrfCoordinator) {
+    vrfCoordinator = _vrfCoordinator;
+  }
+
+  /**
+   * @notice fulfillRandomness handles the VRF response. Your contract must
+   * @notice implement it. See "SECURITY CONSIDERATIONS" above for important
+   * @notice principles to keep in mind when implementing your fulfillRandomness
+   * @notice method.
+   *
+   * @dev VRFConsumerBaseV2 expects its subcontracts to have a method with this
+   * @dev signature, and will call it once it has verified the proof
+   * @dev associated with the randomness. (It is triggered via a call to
+   * @dev rawFulfillRandomness, below.)
+   *
+   * @param requestId The Id initially returned by requestRandomness
+   * @param randomWords the VRF output expanded to the requested number of words
+   */
+  // solhint-disable-next-line chainlink-solidity/prefix-internal-functions-with-underscore
+  function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal virtual;
+
+  // rawFulfillRandomness is called by VRFCoordinator when it receives a valid VRF
+  // proof. rawFulfillRandomness then calls fulfillRandomness, after validating
+  // the origin of the call
+  function rawFulfillRandomWords(uint256 requestId, uint256[] memory randomWords) external {
+    if (msg.sender != vrfCoordinator) {
+      revert OnlyCoordinatorCanFulfill(msg.sender, vrfCoordinator);
+    }
+    fulfillRandomWords(requestId, randomWords);
+  }
+}
+
+interface IPPOMaster {
+    struct Game {
+        address player0;
+        uint32 char;
+        uint32 stock;
+        bool a;
+        bool w;
+        bool[10] score;
+        uint256 wager;
+    }
+    function sponsor(address p, uint32 c, uint32 s, uint32 st, uint256 wager) external returns(uint256);
+    function claim() external;
+    function readBusiness() external view returns (bool);
+    function readTote() external view returns (bool);
+    function readFee() external view returns (uint256);
+    function readSchedule(uint256 game) external view returns (Game memory);
+    function readDub(uint256 game) external view returns (bool);
+    function readBook(address player) external view returns (uint256);
+    function readWinnings(address player) external view returns (uint256);
+    function readLosses(address player) external view returns (uint256);
+    function readActivity() external view returns (uint256);
+    function readMaxBet() external view returns(uint256);
+}
+
+contract PPOMaster is VRFConsumerBaseV2, ConfirmedOwner {
+
+    error NoDice(string);
+    error lvl1__InsufficientFee();
+    error lvl1__NotOpen();
+    error lvl1__ToteClosed();
+    error lvl1__TooMuchSize();
+    error lvl1__InsufficientCredit();
+    error lvl1__SaturatedCredit();
+    error lvl1__StockOverflow();
+    error lvl1__CurrentlyEngaged();
+    
+// State variables
+
+    IPPEXP1 exp;
+    bool public open;
+    bool public safe;
+    uint64 s_subscriptionId;
+    //arb 2gwei 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f
+    bytes32 keyHash = 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f;
+    uint32 callbackGasLimit = 100000;
+    uint16 requestConfirmations = 3;
+    uint256 public games;
+    uint256 public fee = 40000000000000;
+    uint256 public health = 500; // 500 = 5%
+
+////////////    
+// Events //
+////////////
+
+event Fight(uint256 reqId, address player1, uint32 character, uint32 stage, uint32 stock, uint256 wager);
+event newEXP(address expAdd);
+event newFee(uint256 newFee);
+event newChance(address chanceAdd);
+event RequestFulfilled(uint256 requestId, uint256[] randomWords);
+event Loaded(uint256 value);
+event HouseWins(uint256 winning);
+
+////////////////////////
+// Function Modifiers //
+////////////////////////
+
+modifier overhead(uint256 credit) {
+    uint256 _fee = fee;
+    uint256 _health = checkHealth();
+    uint256 _account = book[msg.sender];
+    if(msg.value < _fee){revert lvl1__InsufficientFee();}
+    if(!safe && (msg.value > fee || credit > 0)){revert lvl1__ToteClosed();}
+    if(credit > _account){revert lvl1__InsufficientCredit();}
+    if((credit + msg.value - _fee) > _health){revert lvl1__TooMuchSize();}  
+    if(_account + credit + msg.value - _fee > _health*4){revert lvl1__SaturatedCredit();}
+    if(msg.value > _fee){
+        purchaseCredit(msg.value - _fee);
+    }
+    book[owner()] += _fee;
+    _;
+}
+
+modifier business() {
+    if(!open){revert lvl1__NotOpen();}
+    _;
+}
+
+/////////////////////////////
+// Struct, Arrays or Enums //
+/////////////////////////////
+
+struct Game {
+    address player0;
+    uint32 char;
+    uint32 stock;
+    bool a;
+    bool w;
+    bool[10] score;
+    uint256 wager;
+}
+
+mapping(address => bool) public engagement;
+mapping(address => uint256) public losses;
+mapping(address => uint256) public winnings;
+mapping(address => uint256) public book;
+mapping (uint256 => Game) public schedule;
+VRFCoordinatorV2Interface COORDINATOR;
+
+/////////////////
+// Constructor //
+/////////////////
+
+    constructor ( uint64 subscriptionId) 
+    ConfirmedOwner(msg.sender)
+    //arb 
+    VRFConsumerBaseV2(0x41034678D6C633D8a95c75e1138A360a28bA15d1)
+    {
+        COORDINATOR = VRFCoordinatorV2Interface(
+            0x41034678D6C633D8a95c75e1138A360a28bA15d1
+        );
+        s_subscriptionId = subscriptionId;
+    }
+
+////////////////////////////////
+// External visible functions //
+////////////////////////////////
+
+    function readBusiness() external view returns (bool) {
+        return open;
+    }
+
+    function readTote() external view returns (bool) {
+        return safe;
+    }
+
+    function readFee() external view returns (uint256) {
+        return fee;
+    }
+
+    function readWinnings(address player) external view returns (uint256) {
+        return winnings[player];
+    }
+
+    function readLosses(address player) external view returns (uint256) {
+        return losses[player];
+    }
+
+    function readBook(address player) external view returns (uint256) {
+        return book[player];
+    }
+
+    function readSchedule(uint256 id) external view returns (Game memory) {
+        return schedule[id];
+    }
+
+    function readDub(uint256 id) external view returns (bool) {
+        return schedule[id].w;
+    }
+
+    function readActivity() external view returns (uint256) {
+        return games;
+    }
+
+    function readMaxBet() external view returns(uint256){
+        return checkHealth();
+    }
+
+    function sponsor(
+            address _player1, 
+            uint32 _character, 
+            uint32 _stage, 
+            uint32 _stock, 
+            uint256 _wager
+        ) external payable 
+            overhead(_wager) 
+            business() 
+        returns(uint256){
+            if(_stock > 5){revert lvl1__StockOverflow();}
+            engagement[msg.sender] = true;
+            uint256 id = COORDINATOR.requestRandomWords(
+                keyHash,
+                s_subscriptionId,
+                requestConfirmations,
+                callbackGasLimit,
+                _stock*2);
+            bool[10] memory _score; 
+            schedule[id] = Game({
+                player0: _player1, 
+                char: _character, 
+                stock: _stock,
+                a: false,
+                w: false,
+                score: _score,
+                wager: msg.value + _wager - fee
+            });
+            games++;
+            emit Fight(id, _player1,_character,_stage,_stock, _wager);
+            return id;
+    }
+
+    function setExp(address _newEXP) external onlyOwner {
+        exp = IPPEXP1(_newEXP);
+        emit newEXP(_newEXP);
+    }
+
+    function setFee(uint256 _newFee) external onlyOwner {
+        fee = _newFee;
+        emit newFee(_newFee);
+    }
+
+    function configure(uint32 newGasLimit, bytes32 newGasLane, uint256 newHealth, uint16 newConfirmations) external onlyOwner {
+        if(newGasLimit != 0){
+            callbackGasLimit = newGasLimit;
+        }
+        keyHash = newGasLane;
+        if(newHealth != 0) {
+            health = newHealth;
+        }
+        if(newConfirmations != 0){
+            requestConfirmations = newConfirmations;
+        }
+    }
+
+    function ignition() external onlyOwner {
+        open = !open;
+    }
+
+    function nitro() external onlyOwner {
+        safe = !safe;
+    }
+
+    function adminWithdraw() external onlyOwner {
+        payable(msg.sender).transfer(address(this).balance);
+        open = false;
+    }
+
+    function claim() external business() {
+        if(engagement[msg.sender]){revert lvl1__CurrentlyEngaged();}
+        payable(msg.sender).transfer(book[msg.sender]);
+        winnings[msg.sender] += book[msg.sender];
+        book[msg.sender] = 0;
+    }
+
+    function load() external payable {
+        emit Loaded(msg.value);
+    }
+
+    function deem() external onlyOwner {
+        engagement[msg.sender] = false;
+    }
+
+    ////////////////////////
+    // Internal Functions //
+    ////////////////////////
+
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords) internal override {
+        if(schedule[requestId].player0 == address(0)){revert NoDice("game not found");}
+        emit RequestFulfilled(requestId, randomWords);
+        uint256[] memory _words = randomWords;
+        bool[10] memory _0wins;
+        uint32 p0 = uint32(_words.length) / 2;
+        uint32 p1 = p0;
+        for(uint32 i; i < _words.length;){
+            if(_words[i] % 1000 < 500)
+            { --p0;} else {--p1;
+                _0wins[i] = true;
+            }
+            if(p1 == 0 || p0 == 0){
+                break;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        //bool vict = ;
+        result(requestId,p0 > 0,_0wins);
+    }
+
+    function result(uint256 game, bool p0w, bool[10] memory p0ws) internal {
+        Game memory gameInstance = schedule[game];
+        address _player = gameInstance.player0;
+        uint256 _wager = gameInstance.wager;
+        gameInstance.a = true;
+        gameInstance.score = p0ws;
+        if(p0w){
+            exp.addValue(_player,gameInstance.char,gameInstance.stock);
+            book[_player] += _wager * 95 / 100;
+            gameInstance.w = true;
+        } else {
+            book[_player] -= _wager;
+            losses[_player] += _wager;
+            emit HouseWins(_wager);
+        }
+        schedule[game] = gameInstance;
+        engagement[_player] = false;
+    }
+
+    function purchaseCredit(uint256 value) internal {
+        book[msg.sender] += value;
+    }
+
+    function checkHealth() internal view returns(uint256){
+        return ((address(this).balance - book[owner()]) * health / 10000);
+    }
+    
+}

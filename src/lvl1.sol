@@ -49,8 +49,8 @@ contract PPOMaster is VRFConsumerBaseV2, ConfirmedOwner {
     bool public open;
     bool public safe;
     uint64 s_subscriptionId;
-    //arb goerli 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730
-    bytes32 keyHash = 0x83d1b6e3388bed3d76426974512bb0d270e9542a765cd667242ea26c0cc0b730;
+    //arb 2gwei 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f
+    bytes32 keyHash = 0x08ba8f62ff6c40a58877a106147661db43bc58dabfb814793847a839aa03367f;
     uint32 callbackGasLimit = 100000;
     uint16 requestConfirmations = 3;
     uint256 public games;
@@ -121,13 +121,12 @@ VRFCoordinatorV2Interface COORDINATOR;
 
     constructor ( uint64 subscriptionId) 
     ConfirmedOwner(msg.sender)
-    //arb goerli
-    VRFConsumerBaseV2(0x6D80646bEAdd07cE68cab36c27c626790bBcf17f)
+    //arb 
+    VRFConsumerBaseV2(0x41034678D6C633D8a95c75e1138A360a28bA15d1)
     {
         COORDINATOR = VRFCoordinatorV2Interface(
-            0x6D80646bEAdd07cE68cab36c27c626790bBcf17f
+            0x41034678D6C633D8a95c75e1138A360a28bA15d1
         );
-        //vrf = IfVRF(router);
         s_subscriptionId = subscriptionId;
     }
 
@@ -216,6 +215,19 @@ VRFCoordinatorV2Interface COORDINATOR;
     function setFee(uint256 _newFee) external onlyOwner {
         fee = _newFee;
         emit newFee(_newFee);
+    }
+
+    function configure(uint32 newGasLimit, bytes32 newGasLane, uint256 newHealth, uint16 newConfirmations) external onlyOwner {
+        if(newGasLimit != 0){
+            callbackGasLimit = newGasLimit;
+        }
+        keyHash = newGasLane;
+        if(newHealth != 0) {
+            health = newHealth;
+        }
+        if(newConfirmations != 0){
+            requestConfirmations = newConfirmations;
+        }
     }
 
     function ignition() external onlyOwner {
